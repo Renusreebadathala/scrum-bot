@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import ReactMarkdown from "react-markdown";
 
 type Message = {
@@ -12,23 +12,47 @@ type Message = {
 
 export default function ChatPage() {
   const { projectId } = useParams<{ projectId: string }>();
-
+  const router = useRouter();
+  const [readyToSummarize, setReadyToSummarize] = useState(false);
+  const [generatingSummary, setGeneratingSummary] = useState(false);
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
-  const [readyToSummarize, setReadyToSummarize] = useState(false);
-
+  const [projectTitle, setProjectTitle] = useState<string | null>(null);
+  
   const bottomRef = useRef<HTMLDivElement>(null);
 
   // Load past messages when the page opens
   useEffect(() => {
     async function loadHistory() {
-      const res = await fetch(`/api/chat/${projectId}`);
-      const data = await res.json();
-      setMessages(data.messages);
-      setLoading(false);
+    const res = await fetch(`/api/chat/${projectId}`);
+    const data = await res.json();
+
+    const cleanedMessages = data.messages.map((msg: Message) => {
+      if (msg.role === "assistant" && msg.content.includes("READY_TO_SUMMARIZE")) {
+        return { ...msg, content: msg.content.replace("READY_TO_SUMMARIZE", "").trim() };
+      }
+      return msg;
+  });
+
+    const lastMessage = data.messages[data.messages.length - 1];
+    if (lastMessage?.role === "assistant" && lastMessage.content.includes("READY_TO_SUMMARIZE")) {
+      setReadyToSummarize(true);
     }
+
+    setMessages(cleanedMessages);
+    setLoading(false);
+}
+    async function loadProjectTitle() {
+      const res = await fetch(`/api/projects/${projectId}`);
+      if (res.ok) {
+        const data = await res.json();
+        setProjectTitle(data.title);
+      }
+    }
+
+    loadProjectTitle();
     loadHistory();
   }, [projectId]);
 
@@ -65,6 +89,26 @@ export default function ChatPage() {
     setMessages((prev) => [...prev, { role: "assistant", content: reply }]);
     setSending(false);
   }
+  async function handleGenerateSummary() {
+    if (generatingSummary) return;
+    setGeneratingSummary(true);
+
+    try {
+      const res = await fetch(`/api/summary/${projectId}`, {
+        method: "POST",
+      });
+
+      if (!res.ok) {
+        throw new Error("Failed to generate summary");
+      }
+
+      router.push(`/projects/${projectId}/summary`);
+    } catch (err) {
+      console.error(err);
+      alert("Something went wrong generating the summary. Please try again.");
+      setGeneratingSummary(false);
+    }
+  }
 
   function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -81,8 +125,9 @@ export default function ChatPage() {
           Requirement Chat
         </p>
         <h1 className="text-lg font-medium mt-1">
-          Project ID: <span className="text-[#8A8F9C] font-normal">{projectId}</span>
+          {projectTitle ?? "Loading…"}
         </h1>
+        <p className="text-xs text-[#8A8F9C] mt-1">Project ID: {projectId}</p>
       </header>
 
       {/* Messages */}
@@ -133,8 +178,12 @@ export default function ChatPage() {
             <p className="text-sm text-[#E8A33D]">
               ScrumBot thinks it has enough detail to generate a summary.
             </p>
-            <button className="text-sm font-medium px-3 py-1.5 rounded-md bg-[#E8A33D] text-[#14161C] hover:bg-[#f0b354] transition-colors">
-              Generate Summary
+            <button
+               onClick={handleGenerateSummary}
+               disabled={generatingSummary}
+               className="text-sm font-medium px-3 py-1.5 rounded-md bg-[#E8A33D] text-[#14161C] hover:bg-[#f0b354] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+              {generatingSummary ? "Generating…" : "Generate Summary"}
             </button>
           </div>
         </div>
